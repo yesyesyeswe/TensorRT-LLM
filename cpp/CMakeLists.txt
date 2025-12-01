@@ -566,7 +566,7 @@ if(ENABLE_UCX)
       COMMAND
         ${CMAKE_COMMAND} -E env LIB_BUILD_DIR=${CMAKE_BINARY_DIR}/ucxx/build
         ${ucxx_source_dir}/build.sh libucxx -n
-        --cmake-args=\"-DBUILD_SHARED_LIBS=OFF
+        --cmake-args=\"-DBUILD_SHARED_LIBS=ON
         -DCMAKE_CXX_FLAGS=-D_GLIBCXX_USE_CXX11_ABI=${USE_CXX11_ABI}\"
       OUTPUT_VARIABLE UCXX_BUILD_OUTPUT
       RESULT_VARIABLE UCXX_BUILD_RESULT)

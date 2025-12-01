@@ -51,6 +51,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <unordered_set>
 
 // using namespace nvinfer1;
@@ -283,6 +284,35 @@ public:
         auto const rank = getRank();
         TLLM_LOG_DEBUG(
             "AllReduceOp runtime strategy for rank %d: " + tensorrt_llm::kernels::toString(runtime_strategy), rank);
+
+        if (const char* e = std::getenv("SU_NCCL"); e && e[0] == '1')
+        {
+            runtime_strategy = AllReduceStrategyType::NCCL;
+        }
+        else if (const char* e = std::getenv("SU_NCCL_SYMMETRIC"); e && e[0] == '1')
+        {
+            runtime_strategy = AllReduceStrategyType::NCCL_SYMMETRIC;
+        }
+        else if (const char* e = std::getenv("SU_UB"); e && e[0] == '1')
+        {
+            runtime_strategy = AllReduceStrategyType::UB;
+        }
+        else if (const char* e = std::getenv("SU_ONESHOT"); e && e[0] == '1')
+        {
+            runtime_strategy = AllReduceStrategyType::ONESHOT;
+        }
+        else if (const char* e = std::getenv("SU_TWOSHOT"); e && e[0] == '1')
+        {
+            runtime_strategy = AllReduceStrategyType::TWOSHOT;
+        }
+        else if (const char* e = std::getenv("SU_MIN_LATENCY"); e && e[0] == '1')
+        {
+            runtime_strategy = AllReduceStrategyType::MIN_LATENCY;
+        }
+        else if (const char* e = std::getenv("SU_LOWPRECISION"); e && e[0] == '1')
+        {
+            runtime_strategy = AllReduceStrategyType::LOWPRECISION;
+        }
 
         // Dispatch to different allreduce implementations
         switch (runtime_strategy)

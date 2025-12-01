@@ -27,6 +27,8 @@
 
 #include <unordered_set>
 
+#include <cstdlib>
+
 using namespace nvinfer1;
 using tensorrt_llm::plugins::AllreducePluginCreator;
 using tensorrt_llm::plugins::AllreducePlugin;
@@ -346,6 +348,34 @@ int AllreducePlugin::enqueue(nvinfer1::PluginTensorDesc const* inputDesc, nvinfe
         runtimeStrategy = selectImplementation(size, mGroup.size(), mType);
     }
 
+    if (const char* e = std::getenv("SU_NCCL"); e && e[0] == '1')
+    {
+        runtimeStrategy = AllReduceStrategyType::NCCL;
+    }
+    else if (const char* e = std::getenv("SU_NCCL_SYMMETRIC"); e && e[0] == '1')
+    {
+        runtimeStrategy = AllReduceStrategyType::NCCL_SYMMETRIC;
+    }
+    else if (const char* e = std::getenv("SU_UB"); e && e[0] == '1')
+    {
+        runtimeStrategy = AllReduceStrategyType::UB;
+    }
+    else if (const char* e = std::getenv("SU_ONESHOT"); e && e[0] == '1')
+    {
+        runtimeStrategy = AllReduceStrategyType::ONESHOT;
+    }
+    else if (const char* e = std::getenv("SU_TWOSHOT"); e && e[0] == '1')
+    {
+        runtimeStrategy = AllReduceStrategyType::TWOSHOT;
+    }
+    else if (const char* e = std::getenv("SU_MIN_LATENCY"); e && e[0] == '1')
+    {
+        runtimeStrategy = AllReduceStrategyType::MIN_LATENCY;
+    }
+    else if (const char* e = std::getenv("SU_LOWPRECISION"); e && e[0] == '1')
+    {
+        runtimeStrategy = AllReduceStrategyType::LOWPRECISION;
+    }
     // Log runtime strategy
     auto const rank = COMM_SESSION.getRank();
     switch (runtimeStrategy)
