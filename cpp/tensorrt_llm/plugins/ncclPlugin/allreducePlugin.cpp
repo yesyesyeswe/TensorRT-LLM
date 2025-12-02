@@ -348,33 +348,39 @@ int AllreducePlugin::enqueue(nvinfer1::PluginTensorDesc const* inputDesc, nvinfe
         runtimeStrategy = selectImplementation(size, mGroup.size(), mType);
     }
 
-    if (const char* e = std::getenv("SU_NCCL"); e && e[0] == '1')
+    // 使用SU_ALGO环境变量统一控制算法选择，优先级高于自动选择
+    if (const char* algo_env = std::getenv("SU_ALGO"))
     {
-        runtimeStrategy = AllReduceStrategyType::NCCL;
-    }
-    else if (const char* e = std::getenv("SU_NCCL_SYMMETRIC"); e && e[0] == '1')
-    {
-        runtimeStrategy = AllReduceStrategyType::NCCL_SYMMETRIC;
-    }
-    else if (const char* e = std::getenv("SU_UB"); e && e[0] == '1')
-    {
-        runtimeStrategy = AllReduceStrategyType::UB;
-    }
-    else if (const char* e = std::getenv("SU_ONESHOT"); e && e[0] == '1')
-    {
-        runtimeStrategy = AllReduceStrategyType::ONESHOT;
-    }
-    else if (const char* e = std::getenv("SU_TWOSHOT"); e && e[0] == '1')
-    {
-        runtimeStrategy = AllReduceStrategyType::TWOSHOT;
-    }
-    else if (const char* e = std::getenv("SU_MIN_LATENCY"); e && e[0] == '1')
-    {
-        runtimeStrategy = AllReduceStrategyType::MIN_LATENCY;
-    }
-    else if (const char* e = std::getenv("SU_LOWPRECISION"); e && e[0] == '1')
-    {
-        runtimeStrategy = AllReduceStrategyType::LOWPRECISION;
+        std::string algo_str(algo_env);
+        if (algo_str == "NCCL")
+        {
+            runtimeStrategy = AllReduceStrategyType::NCCL;
+        }
+        else if (algo_str == "NCCL_SYMMETRIC")
+        {
+            runtimeStrategy = AllReduceStrategyType::NCCL_SYMMETRIC;
+        }
+        else if (algo_str == "UB")
+        {
+            runtimeStrategy = AllReduceStrategyType::UB;
+        }
+        else if (algo_str == "ONESHOT")
+        {
+            runtimeStrategy = AllReduceStrategyType::ONESHOT;
+        }
+        else if (algo_str == "TWOSHOT")
+        {
+            runtimeStrategy = AllReduceStrategyType::TWOSHOT;
+        }
+        else if (algo_str == "MIN_LATENCY")
+        {
+            runtimeStrategy = AllReduceStrategyType::MIN_LATENCY;
+        }
+        else if (algo_str == "LOWPRECISION")
+        {
+            runtimeStrategy = AllReduceStrategyType::LOWPRECISION;
+        }
+        // 如果SU_ALGO设置不支持的值，保持自动选择的策略
     }
     // Log runtime strategy
     auto const rank = COMM_SESSION.getRank();

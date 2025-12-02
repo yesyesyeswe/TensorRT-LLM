@@ -2,9 +2,10 @@ import os
 import sys
 import subprocess
 from pathlib import Path
+import argparse
 
 # SEQ_LABELS = ["128", "256", "512", "1k", "2k", "4k", "8k", "16k", "32k", "64k"]
-SEQ_LABELS = ["128", "256", "512", "1k", "2k", "4k", "8k", "16k", "32k", "64k"]
+SEQ_LABELS = ["128", "256", "512", "1k", "2k", "4k", "8k", "16k", "32k"]
 BATCH_SIZES = [1]
 SEQ_MAP = {
     "128": 128,
@@ -143,47 +144,74 @@ def plot_graphs(all_csv_path):
         y_total = g["total_latency(ms)"].tolist() if "total_latency(ms)" in g.columns else []
         y_ttft = g["avg_time_to_first_token(ms)"].tolist() if "avg_time_to_first_token(ms)" in g.columns else []
         y_inter = g["avg_inter_token_latency(ms)"].tolist() if "avg_inter_token_latency(ms)" in g.columns else []
+        # 1) 通信量
         if x and y_comm:
-            plt.figure()
-            print(y_comm)
-            plt.plot(x, y_comm, marker="o")
-            plt.xlabel("sequence_length")
-            plt.ylabel("Total tokens (token_throughput × total_latency_s)")
-            plt.grid(True)
-            plt.tight_layout()
-            plt.ylim(bottom=0)
-            plt.savefig(FIGURES_DIR / f"batch{b}_communication.png")
-            plt.close()
+            fig, ax = plt.subplots(figsize=(6, 4))
+            ax.plot(x, y_comm, marker="o")
+            ax.set_xlabel("sequence_length")
+            ax.set_ylabel("Total tokens (token_throughput × total_latency_s)")
+            ax.set_xscale("log")
+            ax.set_yscale("log")
+            ax.grid(True, which="both", ls="--", alpha=0.5)
+            fig.tight_layout(pad=2)          # 关键：多留边距
+            fig.savefig(RESULTS_DIR / f"batch{b}_communication.png", dpi=200)
+            plt.close(fig)
+
+        # 2) 总延迟
         if x and y_total:
-            plt.figure()
-            plt.plot(x, y_total, marker="o")
-            plt.xlabel("sequence_length")
-            plt.ylabel("total_latency(ms)")
-            plt.grid(True)
-            plt.tight_layout()
-            plt.savefig(FIGURES_DIR / f"batch{b}_total_latency.png")
-            plt.close()
+            fig, ax = plt.subplots(figsize=(6, 4))
+            ax.plot(x, y_total, marker="o", color="C1")
+            ax.set_xlabel("sequence_length")
+            ax.set_ylabel("total_latency (ms)")
+            ax.set_xscale("log")
+            ax.set_yscale("log")
+            ax.grid(True, which="both", ls="--", alpha=0.5)
+            fig.tight_layout(pad=2)
+            fig.savefig(RESULTS_DIR / f"batch{b}_total_latency.png", dpi=200)
+            plt.close(fig)
+
+        # 3) 首 token
         if x and y_ttft:
-            plt.figure()
-            plt.plot(x, y_ttft, marker="o")
-            plt.xlabel("sequence_length")
-            plt.ylabel("avg_time_to_first_token(ms)")
-            plt.grid(True)
-            plt.tight_layout()
-            plt.savefig(FIGURES_DIR / f"batch{b}_ttft.png")
-            plt.close()
+            fig, ax = plt.subplots(figsize=(6, 4))
+            ax.plot(x, y_ttft, marker="o", color="C2")
+            ax.set_xlabel("sequence_length")
+            ax.set_ylabel("avg_time_to_first_token (ms)")
+            ax.set_xscale("log")
+            ax.set_yscale("log")
+            ax.grid(True, which="both", ls="--", alpha=0.5)
+            fig.tight_layout(pad=2)
+            fig.savefig(RESULTS_DIR / f"batch{b}_ttft.png", dpi=200)
+            plt.close(fig)
+
+        # 4) inter-token
         if x and y_inter:
-            plt.figure()
-            plt.plot(x, y_inter, marker="o")
-            plt.xlabel("sequence_length")
-            plt.ylabel("avg_inter_token_latency(ms)")
-            plt.grid(True)
-            plt.tight_layout()
-            plt.savefig(FIGURES_DIR / f"batch{b}_inter_token.png")
-            plt.close()
+            fig, ax = plt.subplots(figsize=(6, 4))
+            ax.plot(x, y_inter, marker="o", color="C3")
+            ax.set_xlabel("sequence_length")
+            ax.set_ylabel("avg_inter_token_latency (ms)")
+            ax.set_xscale("log")
+            ax.set_yscale("log")
+            ax.grid(True, which="both", ls="--", alpha=0.5)
+            fig.tight_layout(pad=2)
+            fig.savefig(RESULTS_DIR / f"batch{b}_inter_token.png", dpi=200)
+            plt.close(fig)
 
 
 def main():
+    parser = argparse.ArgumentParser(description="TensorRT-LLM benchmark runner & plotter")
+    parser.add_argument("--plot-only", action="store_true",
+                        help="Skip dataset/benchmark generation; only (re)draw figures from all_results.csv")
+    args = parser.parse_args()
+
+    if args.plot_only:
+        csv_path = RESULTS_DIR / "all_results.csv"
+        if not csv_path.exists():
+            print(f"[ERROR] --plot-only 需要 {csv_path} 已存在")
+            sys.exit(1)
+        print("[INFO] 仅绘图模式，跳过数据生成与 benchmark")
+        plot_graphs(csv_path)
+        return
+
     ensure_dirs()
     ensure_pydeps()
     for b in BATCH_SIZES:

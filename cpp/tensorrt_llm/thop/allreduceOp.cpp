@@ -280,39 +280,45 @@ public:
 
         AllReduceStrategyType runtime_strategy = selectImplementation(seq_len, hidden_size);
 
+        // 使用SU_ALGO环境变量统一控制算法选择，优先级高于自动选择
+        if (const char* algo_env = std::getenv("SU_ALGO"))
+        {
+            std::string algo_str(algo_env);
+            if (algo_str == "NCCL")
+            {
+                runtime_strategy = AllReduceStrategyType::NCCL;
+            }
+            else if (algo_str == "NCCL_SYMMETRIC")
+            {
+                runtime_strategy = AllReduceStrategyType::NCCL_SYMMETRIC;
+            }
+            else if (algo_str == "UB")
+            {
+                runtime_strategy = AllReduceStrategyType::UB;
+            }
+            else if (algo_str == "ONESHOT")
+            {
+                runtime_strategy = AllReduceStrategyType::ONESHOT;
+            }
+            else if (algo_str == "TWOSHOT")
+            {
+                runtime_strategy = AllReduceStrategyType::TWOSHOT;
+            }
+            else if (algo_str == "MIN_LATENCY")
+            {
+                runtime_strategy = AllReduceStrategyType::MIN_LATENCY;
+            }
+            else if (algo_str == "LOWPRECISION")
+            {
+                runtime_strategy = AllReduceStrategyType::LOWPRECISION;
+            }
+            // 如果SU_ALGO设置不支持的值，保持自动选择的策略
+        }
+
         // Log runtime strategy
         auto const rank = getRank();
         TLLM_LOG_DEBUG(
             "AllReduceOp runtime strategy for rank %d: " + tensorrt_llm::kernels::toString(runtime_strategy), rank);
-
-        if (const char* e = std::getenv("SU_NCCL"); e && e[0] == '1')
-        {
-            runtime_strategy = AllReduceStrategyType::NCCL;
-        }
-        else if (const char* e = std::getenv("SU_NCCL_SYMMETRIC"); e && e[0] == '1')
-        {
-            runtime_strategy = AllReduceStrategyType::NCCL_SYMMETRIC;
-        }
-        else if (const char* e = std::getenv("SU_UB"); e && e[0] == '1')
-        {
-            runtime_strategy = AllReduceStrategyType::UB;
-        }
-        else if (const char* e = std::getenv("SU_ONESHOT"); e && e[0] == '1')
-        {
-            runtime_strategy = AllReduceStrategyType::ONESHOT;
-        }
-        else if (const char* e = std::getenv("SU_TWOSHOT"); e && e[0] == '1')
-        {
-            runtime_strategy = AllReduceStrategyType::TWOSHOT;
-        }
-        else if (const char* e = std::getenv("SU_MIN_LATENCY"); e && e[0] == '1')
-        {
-            runtime_strategy = AllReduceStrategyType::MIN_LATENCY;
-        }
-        else if (const char* e = std::getenv("SU_LOWPRECISION"); e && e[0] == '1')
-        {
-            runtime_strategy = AllReduceStrategyType::LOWPRECISION;
-        }
 
         // Dispatch to different allreduce implementations
         switch (runtime_strategy)
