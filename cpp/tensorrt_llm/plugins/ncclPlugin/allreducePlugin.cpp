@@ -28,6 +28,11 @@
 #include <unordered_set>
 
 #include <cstdlib>
+#include <fstream>
+#include <sstream>
+#include <sys/stat.h>
+#include <errno.h>
+#include <cstring>
 
 using namespace nvinfer1;
 using tensorrt_llm::plugins::AllreducePluginCreator;
@@ -382,6 +387,75 @@ int AllreducePlugin::enqueue(nvinfer1::PluginTensorDesc const* inputDesc, nvinfe
         }
         // 如果SU_ALGO设置不支持的值，保持自动选择的策略
     }
+    // Calculate Allreduce input data size and record in CSV
+     auto const data_size = size * tensorrt_llm::common::getDTypeSize(mType);
+    
+    // Get environment variables
+    const char* batch_size_env = std::getenv("BATCH_SIZE");
+    const char* sequence_length_env = std::getenv("SEQUENCE_LENGTH");
+    const char* su_algo_env = std::getenv("SU_ALGO");
+    const char* nccl_proto_env = std::getenv("NCCL_PROTO");
+    
+    if (batch_size_env && sequence_length_env && su_algo_env)
+    {
+        std::string batch_size(batch_size_env);
+        std::string sequence_length(sequence_length_env);
+        std::string su_algo(su_algo_env);
+        std::string nccl_proto = nccl_proto_env ? nccl_proto_env : "";
+        
+        // Create CSV filename
+        std::stringstream csv_filename;
+        csv_filename << "/root/autodl-tmp/TensorRT-LLM/mybenchmark/results/communication/comm_" 
+                     << batch_size << "_" << sequence_length << "_" << su_algo;
+        if (!nccl_proto.empty()) {
+            csv_filename << "_" << nccl_proto;
+        }
+        csv_filename << ".csv";
+        
+        // Create directory if it doesn't exist
+        std::string dir_path = "/root/autodl-tmp/TensorRT-LLM/mybenchmark/results/communication";
+        struct stat info;
+        if (stat(dir_path.c_str(), &info) != 0)
+        {
+            if (mkdir(dir_path.c_str(), 0755) != 0)
+            {
+                TLLM_LOG_WARNING("Failed to create CSV directory: %s, error: %s", dir_path.c_str(), strerror(errno));
+            }
+        }
+        
+        // Check if file exists to determine if we need to write headers
+        std::ifstream check_file(csv_filename.str());
+        bool file_exists = check_file.good();
+        check_file.close();
+        
+        // Open CSV file for appending
+        std::ofstream csv_file(csv_filename.str(), std::ios::app);
+        if (csv_file.is_open())
+        {
+            // Write headers if file is new
+            if (!file_exists)
+            {
+                csv_file << "Algorithm,Batch_size,Sequence_length,Communication\n";
+            }
+            
+            // Write data row
+            if (nccl_proto.empty()) {
+                csv_file << su_algo << ",";
+            } else {
+                csv_file << su_algo << "_" << nccl_proto << ",";
+            }
+            csv_file << batch_size << "," 
+                     << sequence_length << "," 
+                     << data_size << "\n";
+            
+            csv_file.close();
+        }
+        else
+        {
+            TLLM_LOG_WARNING("Failed to open CSV file for writing: %s, error: %s", csv_filename.str().c_str(), strerror(errno));
+        }
+    }
+
     // Log runtime strategy
     auto const rank = COMM_SESSION.getRank();
     switch (runtimeStrategy)

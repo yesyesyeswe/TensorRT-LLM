@@ -28,10 +28,28 @@ if(NOT Python3_EXECUTABLE)
 endif()
 
 set(cutlass_source_dir ${CMAKE_BINARY_DIR}/_deps/cutlass-src)
+
+# Check if we're in a conda environment
 execute_process(
-  WORKING_DIRECTORY ${cutlass_source_dir}/python/
-  COMMAND ${Python3_EXECUTABLE} setup_library.py develop --user
-  RESULT_VARIABLE _CUTLASS_LIBRARY_SUCCESS)
+  COMMAND ${Python3_EXECUTABLE} -c "import os, sys; print('CONDA_DEFAULT_ENV' in os.environ or hasattr(sys, 'real_prefix') or sys.prefix != sys.base_prefix)"
+  OUTPUT_VARIABLE IN_CONDA_ENV
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
+# Use appropriate install command based on environment
+if(IN_CONDA_ENV STREQUAL "True")
+  # In conda environment, don't use --user flag
+  execute_process(
+    WORKING_DIRECTORY ${cutlass_source_dir}/python/
+    COMMAND ${Python3_EXECUTABLE} setup_library.py develop
+    RESULT_VARIABLE _CUTLASS_LIBRARY_SUCCESS)
+else()
+  # In regular Python environment, use --user flag
+  execute_process(
+    WORKING_DIRECTORY ${cutlass_source_dir}/python/
+    COMMAND ${Python3_EXECUTABLE} setup_library.py develop --user
+    RESULT_VARIABLE _CUTLASS_LIBRARY_SUCCESS)
+endif()
 
 if(NOT _CUTLASS_LIBRARY_SUCCESS EQUAL 0)
   message(
