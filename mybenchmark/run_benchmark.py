@@ -1,12 +1,13 @@
 import os
 import sys
 import subprocess
+import csv
 from pathlib import Path
 import argparse
 
 # SEQ_LABELS = ["128", "256", "512", "1k", "2k", "4k", "8k", "16k", "32k", "64k"]
 SEQ_LABELS = ["128", "256", "512", "1k", "2k", "4k", "8k", "16k", "32k"]
-BATCH_SIZES = [1]
+BATCH_SIZES = [1, 2, 3, 4, 5]
 SEQ_MAP = {
     "128": 128,
     "256": 256,
@@ -24,16 +25,21 @@ SEQ_MAP = {
 BASE = Path("/root/autodl-tmp/TensorRT-LLM/mybenchmark")
 DATA_DIR = BASE / "prepare_data_json"
 RESULTS_DIR = BASE / "results"
+SQLITES_DIR = RESULTS_DIR / "sqlites"
+COMM_DIR = RESULTS_DIR / "communication"
 FIGURES_DIR = BASE / "figures"
 PREPARE_DATASET = Path("/root/autodl-tmp/TensorRT-LLM/benchmarks/cpp/prepare_dataset.py")
 BENCH_BIN = Path("/root/autodl-tmp/TensorRT-LLM/cpp/build/benchmarks/gptManagerBenchmark")
 TOKENIZER_DIR = Path("/root/autodl-tmp/tmp/Qwen/0.6B")
-ENGINE_DIR = Path("/root/autodl-tmp/tmp/qwen/0.6B/trt_engines/fp16/1-gpu/")
+ENGINE_BASE = Path("/root/autodl-tmp/tmp/qwen/0.6B/trt_engines/fp16")
+EXTRACT_SCRIPT = BASE / "extract_nccl_latency.py"
 
 
 def ensure_dirs():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    SQLITES_DIR.mkdir(parents=True, exist_ok=True)
+    COMM_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def ensure_pydeps():
@@ -47,9 +53,13 @@ def ensure_pydeps():
         subprocess.run([sys.executable, "-m", "pip", "install", "matplotlib"], check=False)
 
 
-def generate_dataset(seq_label, batch_size):
+def generate_dataset(seq_label, batch_size, su_algo, tp, nccl_proto):
     input_mean = SEQ_MAP[str(seq_label)]
-    out_file = DATA_DIR / f"token_norm_dist_{seq_label}_{batch_size}.json"
+    
+    out_file = DATA_DIR / f"token_norm_dist_sl{seq_label}.json"
+    
+    if out_file.exists():
+        return True
     cmd = [
         sys.executable,
         str(PREPARE_DATASET),
@@ -59,45 +69,92 @@ def generate_dataset(seq_label, batch_size):
         str(TOKENIZER_DIR),
         "token-norm-dist",
         "--num-requests",
-        "100",
+        "1",
         "--input-mean",
         str(input_mean),
         "--input-stdev",
         "0",
         "--output-mean",
-        "50",
+        "1",
         "--output-stdev",
         "0",
     ]
-    try:
-        subprocess.run(cmd, check=True)
-        return True
-    except subprocess.CalledProcessError:
-        return False
+    return subprocess.run(cmd, check=False).returncode == 0
 
 
-def run_benchmark(seq_label, batch_size):
-    dataset_path = DATA_DIR / f"token_norm_dist_{seq_label}_{batch_size}.json"
-    out_csv = RESULTS_DIR / f"result_{batch_size}_{seq_label}.csv"
+def run_benchmark(seq_label, batch_size, su_algo, tp, nccl_proto):
+    dataset_path = DATA_DIR / f"token_norm_dist_sl{seq_label}.json"
+    if su_algo == "NCCL" and nccl_proto:
+        nsys_out = SQLITES_DIR / f"bs{batch_size}_sl{seq_label}_tp{tp}_algo{su_algo}_{nccl_proto}"
+    else:
+        nsys_out = SQLITES_DIR / f"bs{batch_size}_sl{seq_label}_tp{tp}_algo{su_algo}"
+
+    engine_dir = ENGINE_BASE / f"{tp}-gpu"
     cmd = [
+        "nsys", "profile",
+        "--trace=cuda,osrt",
+        "--export=sqlite",
+        "--output", str(nsys_out),
+        "mpirun", "-n", str(tp), "--allow-run-as-root",
         str(BENCH_BIN),
-        "--engine_dir",
-        str(ENGINE_DIR),
-        "--request_rate",
-        "-1",
-        "--streaming",
-        "--static_emulated_batch_size",
-        str(batch_size),
-        "--dataset",
-        str(dataset_path),
-        "--output_csv",
-        str(out_csv),
+        "--engine_dir", str(engine_dir),
+        "--request_rate", "-1",
+        "--static_emulated_batch_size", "1",
+        "--dataset", str(dataset_path),
     ]
+    env = os.environ.copy()
+    env["COMM_RESULTS_DIR"] = str(COMM_DIR)
+    env["BATCH_SIZE"] = str(batch_size)
+    env["SEQUENCE_LENGTH"] = str(seq_label)
+    env["SU_ALGO"] = str(su_algo)
+    env["TP"] = str(tp)
+    if su_algo == "NCCL" and nccl_proto:
+        env["NCCL_PROTO"] = str(nccl_proto)
+    else:
+        env.pop("NCCL_PROTO", None)
+    return subprocess.run(cmd, check=False, env=env).returncode == 0
+
+def sort_comm_csv(path):
+    if not os.path.exists(path):
+        return
+    with open(path, "r", newline="") as f:
+        r = csv.reader(f)
+        rows = list(r)
+    if not rows:
+        return
+    header = rows[0]
+    body = rows[1:]
     try:
-        subprocess.run(cmd, check=True)
-        return True
-    except subprocess.CalledProcessError:
+        idx = header.index("CudaDevice")
+    except ValueError:
+        return
+    body.sort(key=lambda x: int(x[idx]))
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(header)
+        w.writerows(body)
+
+
+def run_extract_latency(batch_size, seq_label, su_algo, tp, nccl_proto, nsys_out_prefix):
+    sqlite_path = Path(f"{nsys_out_prefix}.sqlite")
+    if not sqlite_path.exists():
         return False
+    env = os.environ.copy()
+    env["BATCH_SIZE"] = str(batch_size)
+    env["SEQUENCE_LENGTH"] = str(seq_label)
+    env["SU_ALGO"] = str(su_algo)
+    env["TP"] = str(tp)
+    if su_algo == "NCCL" and nccl_proto:
+        env["NCCL_PROTO"] = str(nccl_proto)
+    else:
+        env.pop("NCCL_PROTO", None)
+    cmd = [
+        sys.executable,
+        str(EXTRACT_SCRIPT),
+        "--input", str(sqlite_path),
+        "--output-dir", str(RESULTS_DIR),
+    ]
+    return subprocess.run(cmd, check=False, env=env).returncode == 0
 
 
 def merge_csv():
@@ -201,6 +258,11 @@ def main():
     parser = argparse.ArgumentParser(description="TensorRT-LLM benchmark runner & plotter")
     parser.add_argument("--plot-only", action="store_true",
                         help="Skip dataset/benchmark generation; only (re)draw figures from all_results.csv")
+    parser.add_argument("--batches", default="1-5", help="batch sizes, e.g. 1-5 or 1,3,5")
+    parser.add_argument("--seqs", default=",".join(SEQ_LABELS), help="sequence labels list")
+    parser.add_argument("--algos", default="NCCL,ONE_SHOT,TWO_SHOT", help="algorithms to try")
+    parser.add_argument("--tp", default="2", help="tensor parallel sizes, e.g. 2-8 or 2,4,8")
+    parser.add_argument("--nccl-protos", default="Simple,LL,LL128", help="NCCL protos when algo=NCCL")
     args = parser.parse_args()
 
     if args.plot_only:
@@ -214,15 +276,46 @@ def main():
 
     ensure_dirs()
     ensure_pydeps()
-    for b in BATCH_SIZES:
-        for s in SEQ_LABELS:
-            ok_gen = generate_dataset(s, b)
+
+    def parse_range_list(spec, to_int=True):
+        if "-" in spec:
+            a, b = spec.split("-", 1)
+            rng = list(range(int(a), int(b) + 1))
+            return rng
+        vals = [v.strip() for v in spec.split(",") if v.strip()]
+        return [int(v) if to_int else v for v in vals]
+
+    batches = parse_range_list(args.batches)
+    seqs = parse_range_list(args.seqs, to_int=False)
+    algos = [a.strip() for a in args.algos.split(",") if a.strip()]
+    tps = parse_range_list(args.tp)
+    protos = [p.strip() for p in args.nccl_protos.split(",") if p.strip()]
+
+    jobs = []
+    # 生成所有参数组合
+    from itertools import product
+    for b, s, algo, tp in product(batches, seqs, algos, tps):
+        proto_list = protos if algo == "NCCL" else [None]
+        for proto in proto_list:
+            ok_gen = generate_dataset(s, b, algo, tp, proto)
             if not ok_gen:
                 continue
-            run_benchmark(s, b)
-    merged = merge_csv()
-    if merged:
-        plot_graphs(merged)
+            ok_bench = run_benchmark(s, b, algo, tp, proto)
+            name = f"comm_bs{b}_sl{s}_tp{tp}_algo{algo}{'_' + proto if proto else ''}.csv"
+            sort_comm_csv(str(COMM_DIR / name))
+            if ok_bench:
+                nsys_prefix = SQLITES_DIR / (f"bs{b}_sl{s}_tp{tp}_algo{algo}_{proto}" if proto else f"bs{b}_sl{s}_tp{tp}_algo{algo}")
+                jobs.append((b, s, algo, tp, proto, nsys_prefix))
+    for b, s, algo, tp, proto, nsys_prefix in jobs:
+        run_extract_latency(b, s, algo, tp, proto, nsys_prefix)
+    subprocess.run([
+        sys.executable,
+        str(BASE / "merge_comm_latency.py"),
+        "--comm-dir", str(COMM_DIR),
+        "--latency-dir", str(RESULTS_DIR / "latency"),
+        "--out-dir", str(RESULTS_DIR / "merged"),
+    ], check=False)
+    # 绘图逻辑暂保留原函数，如需兼容新 CSV 再迭代
 
 
 if __name__ == "__main__":

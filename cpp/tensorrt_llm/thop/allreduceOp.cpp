@@ -329,25 +329,35 @@ public:
         const char* sequence_length_env = std::getenv("SEQUENCE_LENGTH");
         const char* su_algo_env = std::getenv("SU_ALGO");
         const char* nccl_proto_env = std::getenv("NCCL_PROTO");
+        const char* tp_size_env = std::getenv("TP");
         
-        if (batch_size_env && sequence_length_env && su_algo_env)
+        if (batch_size_env && sequence_length_env && su_algo_env && tp_size_env)
         {
             std::string batch_size(batch_size_env);
             std::string sequence_length(sequence_length_env);
             std::string su_algo(su_algo_env);
             std::string nccl_proto = nccl_proto_env ? nccl_proto_env : "";
+            std::string tp_size(tp_size_env);
+            int cudaDev = -1;
+            cudaGetDevice(&cudaDev);
+            cudaDeviceProp devProp{};
+            cudaGetDeviceProperties(&devProp, cudaDev);
+            char busId[64]{};
+            cudaDeviceGetPCIBusId(busId, sizeof(busId), cudaDev);
             
             // Create CSV filename
             std::stringstream csv_filename;
-            csv_filename << "/root/autodl-tmp/TensorRT-LLM/mybenchmark/results/communication/comm_" 
-                        << batch_size << "_" << sequence_length << "_" << su_algo;
+            const char* results_dir_env = std::getenv("COMM_RESULTS_DIR");
+            std::string out_dir = results_dir_env ? results_dir_env : std::string(".");
+            csv_filename << out_dir << "/comm_"
+                        << "bs" << batch_size << "_sl" << sequence_length << "_tp" << tp_size << "_algo" << su_algo;
             if (!nccl_proto.empty()) {
                 csv_filename << "_" << nccl_proto;
             }
             csv_filename << ".csv";
             
             // Create directory if it doesn't exist
-            std::string dir_path = "/root/autodl-tmp/TensorRT-LLM/mybenchmark/results/communication";
+            std::string dir_path = out_dir;
             struct stat info;
             if (stat(dir_path.c_str(), &info) != 0)
             {
@@ -369,7 +379,7 @@ public:
                 // Write headers if file is new
                 if (!file_exists)
                 {
-                    csv_file << "Algorithm,Batch_size,Sequence_length,Communication\n";
+                    csv_file << "Algorithm,Batch_size,Sequence_length,TP_Size,CudaDevice,MPI_Rank,Communication\n";
                 }
                 
                 // Write data row
@@ -378,8 +388,11 @@ public:
                 } else {
                     csv_file << su_algo << "_" << nccl_proto << ",";
                 }
-                csv_file << batch_size << "," 
-                        << sequence_length << "," 
+                csv_file << batch_size << ","
+                        << sequence_length << ","
+                        << tp_size << ","
+                        << cudaDev << ","
+                        << COMM_SESSION.getRank() << ","
                         << data_size << "\n";
                 
                 csv_file.close();
@@ -392,8 +405,12 @@ public:
 
         // Log runtime strategy
         auto const rank = getRank();
+        int cudaDev = -1;
+        cudaGetDevice(&cudaDev);
+        char busId[64]{};
+        cudaDeviceGetPCIBusId(busId, sizeof(busId), cudaDev);
         TLLM_LOG_DEBUG(
-            "AllReduceOp runtime strategy for rank %d: " + tensorrt_llm::kernels::toString(runtime_strategy), rank);
+            "AllReduceOp runtime strategy for rank %d and CudaDevice %d: " + tensorrt_llm::kernels::toString(runtime_strategy), rank, cudaDev);
 
         // Dispatch to different allreduce implementations
         switch (runtime_strategy)
