@@ -40,6 +40,7 @@ def ensure_dirs():
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     SQLITES_DIR.mkdir(parents=True, exist_ok=True)
     COMM_DIR.mkdir(parents=True, exist_ok=True)
+    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def ensure_pydeps():
@@ -128,11 +129,26 @@ def sort_comm_csv(path):
         idx = header.index("CudaDevice")
     except ValueError:
         return
-    body.sort(key=lambda x: int(x[idx]))
+    
+    # 过滤掉无效行
+    valid_body = []
+    for row in body:
+        if len(row) > idx and row[idx] != "CudaDevice":  # 跳过重复表头
+            try:
+                # 验证是否为有效整数
+                int(row[idx])
+                valid_body.append(row)
+            except (ValueError, IndexError):
+                # 跳过非数字行
+                continue
+    
+    # 排序
+    valid_body.sort(key=lambda x: int(x[idx]))
+    
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(header)
-        w.writerows(body)
+        w.writerows(valid_body)
 
 
 def run_extract_latency(batch_size, seq_label, su_algo, tp, nccl_proto, nsys_out_prefix):
@@ -183,6 +199,44 @@ def merge_csv():
     out = RESULTS_DIR / "all_results.csv"
     all_df.to_csv(out, index=False)
     return out
+
+
+def generate_bandwidth_plots():
+    """生成带宽分析图表"""
+    avg_bandwidth_csv = RESULTS_DIR / "avg_bandwidth.csv"
+    if not avg_bandwidth_csv.exists():
+        print(f"[WARNING] {avg_bandwidth_csv} 不存在，跳过带宽图表生成")
+        return
+    
+    print("[INFO] 开始生成带宽分析图表...")
+    
+    # 1. 对每个 sequence_length 可取的值，固定，画 batch_vs_bandwidth
+    for seq_length in SEQ_LABELS:
+        print(f"[INFO] 生成 batch_vs_bandwidth 图表: sequence_length={seq_length}")
+        subprocess.run([
+            sys.executable,
+            str(BASE / "plot_bandwidth_analysis.py"),
+            "--data-file", str(avg_bandwidth_csv),
+            "--output-dir", str(FIGURES_DIR),
+            "--plot-type", "batch_vs_bandwidth",
+            "--fixed-value", seq_length,
+            "--tp-size", "2",  # 默认使用 TP=2
+        ], check=False)
+    
+    # 2. 对每个 batch_size 可取的值，固定，画 seq_vs_bandwidth
+    for batch_size in BATCH_SIZES:
+        print(f"[INFO] 生成 seq_vs_bandwidth 图表: batch_size={batch_size}")
+        subprocess.run([
+            sys.executable,
+            str(BASE / "plot_bandwidth_analysis.py"),
+            "--data-file", str(avg_bandwidth_csv),
+            "--output-dir", str(FIGURES_DIR),
+            "--plot-type", "seq_vs_bandwidth",
+            "--fixed-value", str(batch_size),
+            "--tp-size", "2",  # 默认使用 TP=2
+        ], check=False)
+    
+    print(f"[INFO] 带宽分析图表生成完成，结果保存在: {FIGURES_DIR}")
 
 
 def plot_graphs(all_csv_path):
@@ -258,6 +312,8 @@ def main():
     parser = argparse.ArgumentParser(description="TensorRT-LLM benchmark runner & plotter")
     parser.add_argument("--plot-only", action="store_true",
                         help="Skip dataset/benchmark generation; only (re)draw figures from all_results.csv")
+    parser.add_argument("--skip-bandwidth-plots", action="store_true",
+                        help="Skip generating bandwidth analysis plots")
     parser.add_argument("--batches", default="1-5", help="batch sizes, e.g. 1-5 or 1,3,5")
     parser.add_argument("--seqs", default=",".join(SEQ_LABELS), help="sequence labels list")
     parser.add_argument("--algos", default="NCCL,ONE_SHOT,TWO_SHOT", help="algorithms to try")
@@ -308,13 +364,33 @@ def main():
                 jobs.append((b, s, algo, tp, proto, nsys_prefix))
     for b, s, algo, tp, proto, nsys_prefix in jobs:
         run_extract_latency(b, s, algo, tp, proto, nsys_prefix)
+    
+    # 为每个文件对调用 merge_comm_latency.py
+    for b, s, algo, tp, proto, nsys_prefix in jobs:
+        comm_file = COMM_DIR / f"comm_bs{b}_sl{s}_tp{tp}_algo{algo}{'_' + proto if proto else ''}.csv"
+        lat_file = RESULTS_DIR / "latency" / f"latency_bs{b}_sl{s}_tp{tp}_algo{algo}{'_' + proto if proto else ''}.csv"
+        
+        if comm_file.exists() and lat_file.exists():
+            subprocess.run([
+                sys.executable,
+                str(BASE / "merge_comm_latency.py"),
+                "--comm-file", str(comm_file),
+                "--latency-file", str(lat_file),
+                "--output-dir", str(RESULTS_DIR / "merged"),
+            ], check=False)
+
+    # Compute average bandwidth
     subprocess.run([
-        sys.executable,
-        str(BASE / "merge_comm_latency.py"),
-        "--comm-dir", str(COMM_DIR),
-        "--latency-dir", str(RESULTS_DIR / "latency"),
-        "--out-dir", str(RESULTS_DIR / "merged"),
-    ], check=False)
+            sys.executable,
+            str(BASE / "calculate_avg_bandwidth.py"),
+            "--merged-dir", str(RESULTS_DIR / "merged"),
+            "--output-file", str(RESULTS_DIR / "avg_bandwidth.csv"),
+        ], check=False)
+
+    # 生成带宽分析图表
+    if not args.skip_bandwidth_plots:
+        generate_bandwidth_plots()
+
     # 绘图逻辑暂保留原函数，如需兼容新 CSV 再迭代
 
 
