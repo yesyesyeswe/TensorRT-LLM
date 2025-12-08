@@ -24,7 +24,7 @@ class BandwidthPlotter:
     def filter_data(self, 
                    algorithm: Optional[str] = None,
                    batch_size: Optional[int] = None,
-                   sequence_length: Optional[str] = None,
+                   sequence_length: Optional[int] = None,
                    tp_size: Optional[int] = None,
                    cuda_device: Optional[int] = None) -> pd.DataFrame:
         """根据条件过滤数据"""
@@ -164,7 +164,7 @@ class BandwidthPlotter:
         plt.tight_layout()
         return fig
     
-    def plot_batch_size_vs_bandwidth(self, sequence_length: str, tp_size: int = 2,
+    def plot_batch_size_vs_bandwidth(self, sequence_length: int, tp_size: int = 2,
                                    algorithms: Optional[List[str]] = None):
         """
         需求2：给定sequence_length，画batch_size不同时的带宽变化
@@ -352,7 +352,7 @@ def main():
         
     elif args.plot_type == 'batch_vs_bandwidth':
         # 给定sequence length，画batch size变化
-        seq_length = args.fixed_value
+        seq_length = int(args.fixed_value)
         fig = plotter.plot_batch_size_vs_bandwidth(
             sequence_length=seq_length,
             tp_size=args.tp_size,
