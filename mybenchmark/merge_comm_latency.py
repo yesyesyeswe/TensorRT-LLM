@@ -104,7 +104,7 @@ def merge_files(comm_file, lat_file, output_dir):
         # 计算带宽：Communication(GB) / Latency(s) = GB/s
         # Communication/1024.0/1024.0/1024.0/Latency*1000.0*1000.0
         if latency_us > 0:  # 避免除零错误
-            Bandwidth = communication_bytes * (1000.0 / 1024.0) * (1000.0 / 1024.0) * (2 * tp_size * (tp_size - 1) / latency_us) / 1024.0 
+            Bandwidth = communication_bytes * (1000.0 / 1024.0) * (1000.0 / 1024.0) * (2  * (tp_size - 1) / latency_us) / 1024.0 
         else:
             Bandwidth = 0.0
         

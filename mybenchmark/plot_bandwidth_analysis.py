@@ -352,7 +352,16 @@ def main():
         
     elif args.plot_type == 'batch_vs_bandwidth':
         # 给定sequence length，画batch size变化
-        seq_length = int(args.fixed_value)
+        # 处理sequence length字符串标签（如"1k" -> 1024）
+        try:
+            seq_length = int(args.fixed_value)  # 尝试直接转换为整数
+        except ValueError:
+            # 如果是字符串标签，使用转换函数
+            seq_length = plotter._seq_length_to_int(args.fixed_value)
+            if seq_length == 0:
+                print(f"错误: 无效的sequence length标签: {args.fixed_value}")
+                return
+        
         fig = plotter.plot_batch_size_vs_bandwidth(
             sequence_length=seq_length,
             tp_size=args.tp_size,
@@ -362,7 +371,7 @@ def main():
             print(f"跳过生成图表: sequence_length={seq_length}, tp_size={args.tp_size}")
             return
         output_file = os.path.join(args.output_dir, 
-                                  f"batch_vs_bandwidth_seq{seq_length}_tp{args.tp_size}.png")
+                                  f"batch_vs_bandwidth_seq{args.fixed_value}_tp{args.tp_size}.png")
     
     # 保存图表
     plotter.save_plot(fig, output_file)

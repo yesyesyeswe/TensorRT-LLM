@@ -100,6 +100,7 @@ def run_benchmark(seq_label, batch_size, su_algo, tp, nccl_proto):
         str(BENCH_BIN),
         "--engine_dir", str(engine_dir),
         "--request_rate", "-1",
+        "--warm_up", "10",
         "--static_emulated_batch_size", "1",
         "--dataset", str(dataset_path),
     ]
@@ -201,42 +202,102 @@ def merge_csv():
     return out
 
 
-def generate_bandwidth_plots():
-    """生成带宽分析图表"""
+def generate_bandwidth_plots(sequence_lengths=None, batch_sizes=None, tp_sizes=None, algorithms=None):
+    """生成带宽分析图表
+    
+    Args:
+        sequence_lengths: 要生成的 sequence length 列表，默认为 SEQ_LABELS
+        batch_sizes: 要生成的 batch size 列表，默认为 BATCH_SIZES  
+        tp_sizes: 要生成的 TP size 列表，默认为 [2]
+        algorithms: 要包含的算法列表，默认为 None (使用所有算法)
+    """
     avg_bandwidth_csv = RESULTS_DIR / "avg_bandwidth.csv"
     if not avg_bandwidth_csv.exists():
         print(f"[WARNING] {avg_bandwidth_csv} 不存在，跳过带宽图表生成")
         return
     
-    print("[INFO] 开始生成带宽分析图表...")
+    # 使用默认参数
+    if sequence_lengths is None:
+        sequence_lengths = SEQ_LABELS
+    if batch_sizes is None:
+        batch_sizes = BATCH_SIZES
+    if tp_sizes is None:
+        tp_sizes = [2]  # 默认 TP=2
     
+    print("[INFO] 开始生成带宽分析图表...")
+    print(f"[INFO] Sequence lengths: {sequence_lengths}")
+    print(f"[INFO] Batch sizes: {batch_sizes}")
+    print(f"[INFO] TP sizes: {tp_sizes}")
+    if algorithms:
+        try:
+            import pandas as pd
+            df_alg = pd.read_csv(avg_bandwidth_csv)
+            available_algos = [str(a) for a in df_alg.get("Algorithm", []).unique().tolist()]
+        except Exception:
+            available_algos = []
+        expanded = []
+        for a in algorithms:
+            a = a.strip()
+            if not a:
+                continue
+            matches = [x for x in available_algos if x == a or x.startswith(a)]
+            if matches:
+                for m in matches:
+                    if m not in expanded:
+                        expanded.append(m)
+            else:
+                if a not in expanded:
+                    expanded.append(a)
+        algorithms = expanded if expanded else algorithms
+        print(f"[INFO] Algorithms: {algorithms}")
+    
+    # 构建算法参数
+    algo_args = []
+    if algorithms:
+        algo_args = ["--algorithms"] + [a.strip() for a in algorithms if a.strip()]
+    
+    total_plots = len(sequence_lengths) * len(tp_sizes) + len(batch_sizes) * len(tp_sizes)
+    print(f"[INFO] 预计生成 {total_plots} 个图表")
+    
+    plot_count = 0
     # 1. 对每个 sequence_length 可取的值，固定，画 batch_vs_bandwidth
-    for seq_length in SEQ_LABELS:
-        print(f"[INFO] 生成 batch_vs_bandwidth 图表: sequence_length={seq_length}")
-        subprocess.run([
-            sys.executable,
-            str(BASE / "plot_bandwidth_analysis.py"),
-            "--data-file", str(avg_bandwidth_csv),
-            "--output-dir", str(FIGURES_DIR),
-            "--plot-type", "batch_vs_bandwidth",
-            "--fixed-value", seq_length,
-            "--tp-size", "2",  # 默认使用 TP=2
-        ], check=False)
+    for seq_length in sequence_lengths:
+        for tp_size in tp_sizes:
+            plot_count += 1
+            print(f"[INFO] [{plot_count}/{total_plots}] 生成 batch_vs_bandwidth 图表: sequence_length={seq_length}, tp_size={tp_size}")
+            cmd = [
+                sys.executable,
+                str(BASE / "plot_bandwidth_analysis.py"),
+                "--data-file", str(avg_bandwidth_csv),
+                "--output-dir", str(FIGURES_DIR),
+                "--plot-type", "batch_vs_bandwidth",
+                "--fixed-value", seq_length,
+                "--tp-size", str(tp_size),
+            ]
+            if algo_args:
+                cmd.extend(algo_args)
+            subprocess.run(cmd, check=False)
     
     # 2. 对每个 batch_size 可取的值，固定，画 seq_vs_bandwidth
-    for batch_size in BATCH_SIZES:
-        print(f"[INFO] 生成 seq_vs_bandwidth 图表: batch_size={batch_size}")
-        subprocess.run([
-            sys.executable,
-            str(BASE / "plot_bandwidth_analysis.py"),
-            "--data-file", str(avg_bandwidth_csv),
-            "--output-dir", str(FIGURES_DIR),
-            "--plot-type", "seq_vs_bandwidth",
-            "--fixed-value", str(batch_size),
-            "--tp-size", "2",  # 默认使用 TP=2
-        ], check=False)
+    for batch_size in batch_sizes:
+        for tp_size in tp_sizes:
+            plot_count += 1
+            print(f"[INFO] [{plot_count}/{total_plots}] 生成 seq_vs_bandwidth 图表: batch_size={batch_size}, tp_size={tp_size}")
+            cmd = [
+                sys.executable,
+                str(BASE / "plot_bandwidth_analysis.py"),
+                "--data-file", str(avg_bandwidth_csv),
+                "--output-dir", str(FIGURES_DIR),
+                "--plot-type", "seq_vs_bandwidth",
+                "--fixed-value", str(batch_size),
+                "--tp-size", str(tp_size),
+            ]
+            if algo_args:
+                cmd.extend(algo_args)
+            subprocess.run(cmd, check=False)
     
     print(f"[INFO] 带宽分析图表生成完成，结果保存在: {FIGURES_DIR}")
+    print(f"[INFO] 共生成 {plot_count} 个图表")
 
 
 def plot_graphs(all_csv_path):
@@ -316,7 +377,7 @@ def main():
                         help="Skip generating bandwidth analysis plots")
     parser.add_argument("--batches", default="1-5", help="batch sizes, e.g. 1-5 or 1,3,5")
     parser.add_argument("--seqs", default=",".join(SEQ_LABELS), help="sequence labels list")
-    parser.add_argument("--algos", default="NCCL,ONE_SHOT,TWO_SHOT", help="algorithms to try")
+    parser.add_argument("--algos", default="NCCL_Simple", help="algorithms to try")
     parser.add_argument("--tp", default="2", help="tensor parallel sizes, e.g. 2-8 or 2,4,8")
     parser.add_argument("--nccl-protos", default="Simple,LL,LL128", help="NCCL protos when algo=NCCL")
     args = parser.parse_args()
@@ -389,7 +450,19 @@ def main():
 
     # 生成带宽分析图表
     if not args.skip_bandwidth_plots:
-        generate_bandwidth_plots()
+        # 使用现有的参数来生成带宽图表
+        # 解析序列长度、批次大小、TP大小和算法参数
+        seq_list = args.seqs.split(",") if args.seqs else SEQ_LABELS
+        batch_list = parse_range_list(args.batches) if args.batches else BATCH_SIZES
+        tp_list = parse_range_list(args.tp) if args.tp else [2]
+        algo_list = args.algos.split(",") if args.algos else None
+        
+        generate_bandwidth_plots(
+            sequence_lengths=seq_list,
+            batch_sizes=batch_list,
+            tp_sizes=tp_list,
+            algorithms=algo_list
+        )
 
     # 绘图逻辑暂保留原函数，如需兼容新 CSV 再迭代
 
