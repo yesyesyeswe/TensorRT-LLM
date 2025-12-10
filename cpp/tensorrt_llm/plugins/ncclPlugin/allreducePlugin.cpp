@@ -421,7 +421,7 @@ int AllreducePlugin::enqueue(nvinfer1::PluginTensorDesc const* inputDesc, nvinfe
         if (!nccl_proto.empty()) {
             csv_filename << "_" << nccl_proto;
         }
-        csv_filename << ".csv";
+        csv_filename << "_gpu" << cudaDev << ".csv";
         
         // Create directory if it doesn't exist
         std::string dir_path = out_dir;
@@ -446,7 +446,7 @@ int AllreducePlugin::enqueue(nvinfer1::PluginTensorDesc const* inputDesc, nvinfe
             // Write headers if file is new
             if (!file_exists)
             {
-                csv_file << "Algorithm,Batch_size,Sequence_length,TP_Size,CudaDevice,MPI_Rank,Communication\n";
+                csv_file << "Algorithm,Batch_size,Sequence_length,TP_Size,CudaDevice,MPI_Rank,Communication" << std::endl;
             }
             
             // Write data row
@@ -460,8 +460,9 @@ int AllreducePlugin::enqueue(nvinfer1::PluginTensorDesc const* inputDesc, nvinfe
                      << tp_size << ","
                      << cudaDev << ","
                      << COMM_SESSION.getRank() << ","
-                     << data_size << "\n";
-            
+                     << data_size << std::endl;
+                     
+            csv_file.flush();
             csv_file.close();
         }
         else
