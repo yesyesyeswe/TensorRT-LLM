@@ -477,7 +477,7 @@ int AllreducePlugin::enqueue(nvinfer1::PluginTensorDesc const* inputDesc, nvinfe
     cudaGetDevice(&cudaDev);
     char busId[64]{};
     cudaDeviceGetPCIBusId(busId, sizeof(busId), cudaDev);
-    TLLM_LOG_INFO("AllReducePlugin rank %d on cudaDev %d", rank, cudaDev);
+    TLLM_LOG_DEBUG("AllReducePlugin rank %d on cudaDev %d", rank, cudaDev);
     switch (runtimeStrategy)
     {
     case AllReduceStrategyType::NCCL:
